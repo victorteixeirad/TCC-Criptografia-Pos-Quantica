@@ -1,0 +1,26 @@
+Iniciando simulação de ataque exaustivo contra criptografia PQC...
+Tentando comprometer a chave...
+--- 1. Prova de Operação PQC Ativa (Dilithium) ---
+Chaves PQC geradas e documento assinado com sucesso. Algoritmo ativo.
+----------------------------------------------------
+--- 2. Simulação de Ataque Exaustivo Paralelo ---
+Iniciando 4 processos de ataque paralelos para testar a resistência da PQC...
+  -- Tentativa 5000000: Falhou. Tempo decorrido: 8s.
+  -- Tentativa 15000000: Falhou. Tempo decorrido: 8s.
+  -- Tentativa 10000000: Falhou. Tempo decorrido: 8s.
+  -- Tentativa 20000000: Falhou. Tempo decorrido: 9s.
+  -- Tentativa 5000000: Falhou. Tempo decorrido: 14s.
+  -- Tentativa 10000000: Falhou. Tempo decorrido: 14s.
+  -- Tentativa 15000000: Falhou. Tempo decorrido: 14s.
+  -- Tentativa 20000000: Falhou. Tempo decorrido: 14s.
+  -- Tentativa 5000000: Falhou. Tempo decorrido: 19s.
+  -- Tentativa 10000000: Falhou. Tempo decorrido: 19s.
+  -- Tentativa 15000000: Falhou. Tempo decorrido: 19s.
+  -- Tentativa 20000000: Falhou. Tempo decorrido: 19s.
+  -- Tentativa 5000000: Falhou. Tempo decorrido: 24s.
+  -- Tentativa 10000000: Falhou. Tempo decorrido: 24s.
+  -- Tentativa 15000000: Falhou. Tempo decorrido: 25s.
+  -- Tentativa 20000000: Falhou. Tempo decorrido: 25s.
+Ataque concluído.
+Tempo total de execução do ataque exaustivo: 25 segundos.
+Resultado: Todas as tentativas falharam. Criptografia PQC demonstrou resistência.
