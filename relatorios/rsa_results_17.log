@@ -1,0 +1,23 @@
+Iniciando simulação de ataque e fatoração contra criptografia RSA...
+Chave RSA de 2048 bits gerada com sucesso. (2048-bit é o alvo)
+----------------------------------------------------
+Iniciando 4 processos de ataque paralelos para maximizar o uso da CPU...
+  -- Progresso: 25% completo. Tentativas totais: 5000000. Tempo decorrido: 8s.
+  -- Progresso: 100% completo. Tentativas totais: 20000000. Tempo decorrido: 8s.
+  -- Progresso: 50% completo. Tentativas totais: 10000000. Tempo decorrido: 8s.
+  -- Progresso: 75% completo. Tentativas totais: 15000000. Tempo decorrido: 8s.
+  -- Progresso: 25% completo. Tentativas totais: 5000000. Tempo decorrido: 14s.
+  -- Progresso: 100% completo. Tentativas totais: 20000000. Tempo decorrido: 15s.
+  -- Progresso: 75% completo. Tentativas totais: 15000000. Tempo decorrido: 15s.
+  -- Progresso: 50% completo. Tentativas totais: 10000000. Tempo decorrido: 15s.
+  -- Progresso: 25% completo. Tentativas totais: 5000000. Tempo decorrido: 20s.
+  -- Progresso: 100% completo. Tentativas totais: 20000000. Tempo decorrido: 20s.
+  -- Progresso: 75% completo. Tentativas totais: 15000000. Tempo decorrido: 20s.
+  -- Progresso: 50% completo. Tentativas totais: 10000000. Tempo decorrido: 21s.
+  -- Progresso: 100% completo. Tentativas totais: 20000000. Tempo decorrido: 25s.
+  -- Progresso: 25% completo. Tentativas totais: 5000000. Tempo decorrido: 26s.
+  -- Progresso: 75% completo. Tentativas totais: 15000000. Tempo decorrido: 26s.
+  -- Progresso: 50% completo. Tentativas totais: 10000000. Tempo decorrido: 26s.
+Ataque concluído.
+Tempo total de execução do ataque exaustivo: 26 segundos.
+Simulação de sucesso da fatoração. Chave RSA COMPROMETIDA.

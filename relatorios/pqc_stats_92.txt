@@ -1,0 +1,2 @@
+NAME                                  CPU %     MEM USAGE / LIMIT   NET I/O
+pqc_container_run92_20251212_025253   388.32%   1.649GiB / 4GiB     910B / 84B
