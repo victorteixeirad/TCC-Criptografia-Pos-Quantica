@@ -20,7 +20,7 @@ Este comando irá:
 * Gerar os relatórios automaticamente
 
 # Converter e analisar os resultados
-./analyze_performance.py
+python3 ./analyze_performance.py --aggregate
 
 Este script realiza:
 * Conversão automática das métricas para os padrões decimais (GB, MB, KB)
