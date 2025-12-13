@@ -1,60 +1,70 @@
 #!/bin/bash
+# run_simulation.sh - roda N simulações para RSA e PQC e salva resultados por rodada
+# Uso: ./run_simulation.sh N
+# Ex: ./run_simulation.sh 5
 
-# --- Passo 1: Construir as imagens Docker ---
-echo "Construindo a imagem do ambiente RSA..."
-docker build -t rsa-env ../rsa_ambiente
-if [ $? -ne 0 ]; then
-  echo "Erro ao construir a imagem RSA. Abortando."
-  exit 1
-fi
+set -euo pipefail
 
-echo "Construindo a imagem do ambiente PQC..."
-docker build -t pqc-env ../pqc_ambiente
-if [ $? -ne 0 ]; then
-  echo "Erro ao construir a imagem PQC. Abortando."
-  exit 1
-fi
+NUM_RUNS=${1:-1}   # Se não passar argumento, roda 1 vez
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(realpath "${SCRIPT_DIR}/..")"
+REL_DIR="${ROOT_DIR}/relatorios"
 
-# --- Passo 2: Rodar o contêiner RSA e coletar dados ---
-echo "Iniciando a simulação para o ambiente RSA..."
-docker run --name rsa_container -d --cpus=4 -m 4g rsa-env
+RSA_IMG_PATH="${ROOT_DIR}/rsa_ambiente"
+PQC_IMG_PATH="${ROOT_DIR}/pqc_ambiente"
 
-# Monitorar o uso de recursos e tempo de execução do contêiner RSA
-echo "Monitorando recursos do contêiner RSA..."
-docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}" rsa_container > ../relatorios/rsa_stats.txt 2> /dev/null
+RSA_IMAGE_TAG="rsa-env"
+PQC_IMAGE_TAG="pqc-env"
 
-# Aguardar a conclusão do script de ataque
-docker wait rsa_container
-echo "Simulação RSA concluída."
+# Certifica-se que a pasta de relatórios existe
+mkdir -p "${REL_DIR}"
 
-# Coletar o log de resultados
-docker logs rsa_container > ../relatorios/rsa_results.log 2> /dev/null
-docker rm rsa_container
+echo "=== Iniciando pipeline de simulação — ${NUM_RUNS} rodadas ==="
 
-# --- Passo 3: Rodar o contêiner PQC e coletar dados ---
-echo "Iniciando a simulação para o ambiente PQC..."
-docker run --name pqc_container -d --cpus=4 -m 4g pqc-env
+# Build das imagens (apenas 1 vez)
+echo "Construindo imagem RSA..."
+docker build -t "${RSA_IMAGE_TAG}" "${RSA_IMG_PATH}" || { echo "Falha no build RSA"; exit 1; }
 
-# Monitorar o uso de recursos e tempo de execução do contêiner PQC
-echo "Monitorando recursos do contêiner PQC..."
-docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}" pqc_container > ../relatorios/pqc_stats.txt 2> /dev/null
+echo "Construindo imagem PQC..."
+docker build -t "${PQC_IMAGE_TAG}" "${PQC_IMG_PATH}" || { echo "Falha no build PQC"; exit 1; }
 
-# Aguardar a conclusão do script de ataque
-docker wait pqc_container
-echo "Simulação PQC concluída."
+for run in $(seq 1 "${NUM_RUNS}"); do
+  echo "---------------------------------------------"
+  echo "Rodada ${run} / ${NUM_RUNS}"
+  timestamp=$(date +%Y%m%d_%H%M%S)
+  
+  # --- RSA ---
+  rsa_container_name="rsa_container_run${run}_${timestamp}"
+  echo "Iniciando container RSA (${rsa_container_name})..."
+  docker run --name "${rsa_container_name}" -d --cpus=4 -m 4g "${RSA_IMAGE_TAG}"
+  
+  echo "Coletando snapshot de stats RSA..."
+  docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}" "${rsa_container_name}" > "${REL_DIR}/rsa_stats_${run}.txt" 2>/dev/null || true
 
-# Coletar o log de resultados
-docker logs pqc_container > ../relatorios/pqc_results.log 2> /dev/null
-docker rm pqc_container
+  docker wait "${rsa_container_name}" >/dev/null
+  echo "Container RSA finalizado. Salvando logs..."
+  docker logs "${rsa_container_name}" > "${REL_DIR}/rsa_results_${run}.log" 2>/dev/null || true
+  docker rm "${rsa_container_name}" >/dev/null || true
 
-# --- Passo 4: Coleta de Dados e Análise ---
-echo "Coleta de dados de ambas as simulações concluída."
-echo "Os relatórios de desempenho e logs estão na pasta 'relatorios'."
+  # --- PQC ---
+  pqc_container_name="pqc_container_run${run}_${timestamp}"
+  echo "Iniciando container PQC (${pqc_container_name})..."
+  docker run --name "${pqc_container_name}" -d --cpus=4 -m 4g "${PQC_IMAGE_TAG}"
+  
+  echo "Coletando snapshot de stats PQC..."
+  docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}" "${pqc_container_name}" > "${REL_DIR}/pqc_stats_${run}.txt" 2>/dev/null || true
 
-echo "---"
-echo "Sumário dos Resultados:"
-echo "Resultados RSA:"
-cat ../relatorios/rsa_results.log
-echo "---"
-echo "Resultados PQC:"
-cat ../relatorios/pqc_results.log
+  docker wait "${pqc_container_name}" >/dev/null
+  echo "Container PQC finalizado. Salvando logs..."
+  docker logs "${pqc_container_name}" > "${REL_DIR}/pqc_results_${run}.log" 2>/dev/null || true
+  docker rm "${pqc_container_name}" >/dev/null || true
+
+  echo "Rodada ${run} concluída. Arquivos gerados em ${REL_DIR}:"
+  ls -1 "${REL_DIR}"/rsa_*_"${run}".* "${REL_DIR}"/pqc_*_"${run}".* 2>/dev/null || true
+done
+
+echo "Todas as rodadas finalizadas. Chamando o analisador Python para agregar resultados..."
+# Chame o analisador (assume python3 no PATH)
+python3 "${SCRIPT_DIR}/analyze_performance.py" --aggregate || true
+
+echo "Pipeline concluído. Verifique a pasta ${REL_DIR} para os resultados."

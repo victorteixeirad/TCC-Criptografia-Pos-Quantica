@@ -1,208 +1,366 @@
+#!/usr/bin/env python3
 import os
 import re
+import argparse
+import json
+import csv
 from tabulate import tabulate
 import matplotlib.pyplot as plt
-import json 
+from statistics import mean, stdev
 
 # --- Definições de Caminho ---
-# Este script deve estar na pasta 'scripts'
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PASTA_RELATORIOS = os.path.join(BASE_DIR, "..", "relatorios")
 PASTA_RELATORIOS = os.path.normpath(PASTA_RELATORIOS)
 
-# --- Funções de Conversão (Corrigidas para precisão) ---
+# --- Funções utilitárias ---
 
-# Converte unidades Linux (GiB → GB, MiB → MB, KiB → KB, B → KB)
 def converter_unidade(valor_str):
+    if not valor_str:
+        return valor_str
     valor_str = valor_str.strip()
-    match = re.match(r"([\d\.]+)(GiB|MiB|KiB|B)", valor_str)
+    match = re.match(r"([\d\.]+)(GiB|MiB|KiB|B|GB|MB|kB)", valor_str)
     if not match:
         return valor_str
-    
+
     valor, unidade = float(match.group(1)), match.group(2)
 
-    # Fatores de conversão (Binário para Decimal)
-    if unidade == "GiB":
-        return f"{valor * 1.07374:.2f} GB"
-    elif unidade == "MiB":
-        return f"{valor * 1.04858:.2f} MB"
-    elif unidade == "KiB":
-        return f"{valor * 1.024:.2f} KB"
+    if unidade in ("GiB", "GB"):
+        return f"{valor:.2f} GB"
+    elif unidade in ("MiB", "MB"):
+        return f"{(valor / 1024):.2f} GB"
+    elif unidade == "KiB" or unidade == "kB":
+        return f"{(valor / (1024 * 1024)):.2f} GB"
     elif unidade == "B":
-        # Converte Bytes para KB para melhor leitura se for um valor grande
-        if valor > 1024:
-            return f"{valor / 1024:.2f} KB"
-        return f"{valor:.0f} B"
+        return f"{(valor / (1024 * 1024 * 1024)):.2f} GB"
     return valor_str
 
-
-# --- Funções de Parsing Corrigidas ---
-
-def ler_dados_estatisticos(caminho):
-    """Lê o arquivo stats e extrai CPU e Memória."""
-    dados = {}
-    try:
-        with open(caminho, "r", encoding="utf-8") as f:
-            conteudo = f.read()
-    except Exception:
-        return None
-
-    # Regex robusta para ler o formato da tabela docker stats
-    # Captura 1: Nome, 2: CPU%, 3: Mem. Usada (MiB/GiB), 4: Limite (GiB), 5: I/O Recebido, 6: I/O Enviado
-    match = re.search(r"(\S+)\s+([\d\.]+)\%\s+([\d\.]+MiB|[\d\.]+GiB)\s*/\s*([\d\.]+GiB)\s*([\d\.]+B|[\d\.]+kB)\s*/\s*([\d\.]+B|[\d\.]+kB)", conteudo)
-
-    if match:
-        dados["Ambiente"] = match.group(1).replace("_container", "")
-        dados["CPU (%)"] = float(match.group(2)) # Mantém como float para o gráfico
-        dados["Memória Usada"] = converter_unidade(match.group(3))
-        dados["Memória Limite"] = converter_unidade(match.group(4))
-        dados["NET I/O (Recebido)"] = converter_unidade(match.group(5))
-        dados["NET I/O (Enviado)"] = converter_unidade(match.group(6))
-    
-    return dados
-
-def ler_dados_log(caminho):
-    """Lê o arquivo de log e extrai Tempo e Status."""
-    dados = {}
-    try:
-        with open(caminho, "r", encoding="utf-8") as f:
-            conteudo = f.read()
-    except Exception:
-        return None
-
-    # Regex para Tempo Total
+def extrair_numero_tempo(conteudo):
     tempo = re.search(r"Tempo total de execução.*?(\d+)\s*segundos", conteudo)
     if tempo:
-        dados["Tempo Total (s)"] = int(tempo.group(1)) # Mantém como int para o gráfico
+        return int(tempo.group(1))
+    return None
 
-    # Define o Status (procura pela linha de conclusão)
-    if "rsa_results" in os.path.basename(caminho):
-        status = "COMPROMETIDA" if re.search(r"Chave RSA COMPROMETIDA.", conteudo) else "FALHA (Sem Status)"
+def extrair_status(conteudo, tipo):
+    if tipo == "rsa":
+        return "COMPROMETIDA" if re.search(r"Chave RSA COMPROMETIDA", conteudo, re.IGNORECASE) else "FALHA"
     else:
-        status = "RESISTENTE" if re.search(r"Criptografia PQC demonstrou resistência.", conteudo) else "FALHA (Sem Status)"
-    dados["Status Final"] = status
-    
-    return dados
+        return "RESISTENTE" if re.search(r"Criptografia PQC demonstrou resistência", conteudo, re.IGNORECASE) else "FALHA"
 
+def parse_stats_file(caminho_stats):
+    try:
+        with open(caminho_stats, "r", encoding="utf-8") as f:
+            conteudo = f.read()
+    except Exception:
+        return None
 
-# --- Função Principal de Consolidação ---
+    m = re.search(r"[\S]+\s+([\d\.]+)\%\s+([\d\.]+(?:MiB|GiB|MB|GB|KiB|kB|B))\s*/\s*([\d\.]+(?:GiB|GB|MiB))", conteudo)
+    if not m:
+        m2 = re.search(r"([\d\.]+)\%\s+([\d\.]+(?:MiB|GiB|MB|GB|KiB|kB|B))", conteudo)
+        if m2:
+            cpu = float(m2.group(1))
+            mem_raw = m2.group(2)
+            mem_conv = converter_unidade(mem_raw)
+            try:
+                mem_gb = float(re.search(r"([\d\.]+)", mem_conv).group(1))
+            except:
+                mem_gb = None
+            return {"cpu": cpu, "mem_gb": mem_gb}
+        return None
 
-def gerar_relatorio_consolidado():
-    dados_finais = []
-    
-    # 1. Processar RSA
-    stats_rsa = ler_dados_estatisticos(os.path.join(PASTA_RELATORIOS, "rsa_stats.txt"))
-    log_rsa = ler_dados_log(os.path.join(PASTA_RELATORIOS, "rsa_results.log"))
-    
-    if stats_rsa and log_rsa:
-        dados_finais.append({**stats_rsa, **log_rsa}) # Combina os dicionários
-        
-    # 2. Processar PQC
-    stats_pqc = ler_dados_estatisticos(os.path.join(PASTA_RELATORIOS, "pqc_stats.txt"))
-    log_pqc = ler_dados_log(os.path.join(PASTA_RELATORIOS, "pqc_results.log"))
-    
-    if stats_pqc and log_pqc:
-        dados_finais.append({**stats_pqc, **log_pqc})
+    cpu = float(m.group(1))
+    mem_raw = m.group(2)
+    mem_conv = converter_unidade(mem_raw)
+    try:
+        mem_gb = float(re.search(r"([\d\.]+)", mem_conv).group(1))
+    except:
+        mem_gb = None
 
-    return dados_finais
+    return {"cpu": cpu, "mem_gb": mem_gb}
 
-# --- Geração Gráfica ---
-def gerar_graficos(dados, pasta_saida):
+def coletar_arquivos_por_padrao(padrao_prefixo):
+    files = []
+    for f in os.listdir(PASTA_RELATORIOS):
+        if f.startswith(padrao_prefixo):
+            files.append(os.path.join(PASTA_RELATORIOS, f))
+    def extract_index(path):
+        base = os.path.basename(path)
+        m = re.search(r"_(\d+)\.log$|_(\d+)\.txt$", base)
+        if m:
+            for g in m.groups():
+                if g:
+                    return int(g)
+        return base
+    try:
+        files_sorted = sorted(files, key=extract_index)
+    except Exception:
+        files_sorted = sorted(files)
+    return files_sorted
+
+def agrupar_por_rodada():
+    rsa_logs = coletar_arquivos_por_padrao("rsa_results_")
+    pqc_logs = coletar_arquivos_por_padrao("pqc_results_")
+    rsa_stats = coletar_arquivos_por_padrao("rsa_stats_")
+    pqc_stats = coletar_arquivos_por_padrao("pqc_stats_")
+
+    def idx_from_name(path):
+        base = os.path.basename(path)
+        m = re.search(r"_(\d+)\.", base)
+        return int(m.group(1)) if m else None
+
+    runs = {}
+    for p in rsa_logs:
+        idx = idx_from_name(p) or len(runs)+1
+        runs.setdefault(idx, {})["rsa_log"] = p
+    for p in pqc_logs:
+        idx = idx_from_name(p) or len(runs)+1
+        runs.setdefault(idx, {})["pqc_log"] = p
+    for p in rsa_stats:
+        idx = idx_from_name(p) or len(runs)+1
+        runs.setdefault(idx, {})["rsa_stats"] = p
+    for p in pqc_stats:
+        idx = idx_from_name(p) or len(runs)+1
+        runs.setdefault(idx, {})["pqc_stats"] = p
+
+    resultados = []
+    for idx in sorted(runs.keys()):
+        resultados.append({"run": idx, **runs[idx]})
+    return resultados
+
+def processar_todas_rodadas():
+    rodadas = agrupar_por_rodada()
+    if not rodadas:
+        print("Nenhuma rodada encontrada em:", PASTA_RELATORIOS)
+        return None
+
+    dataset = []
+    for r in rodadas:
+        run_idx = r.get("run")
+        item = {"run": run_idx}
+
+        # RSA
+        rsa_log = r.get("rsa_log")
+        rsa_stats = r.get("rsa_stats")
+        if rsa_log and os.path.exists(rsa_log):
+            with open(rsa_log, "r", encoding="utf-8") as f:
+                conteudo = f.read()
+            item["rsa_time_s"] = extrair_numero_tempo(conteudo)
+            item["rsa_status"] = extrair_status(conteudo, "rsa")
+        else:
+            item["rsa_time_s"] = None
+            item["rsa_status"] = "N/A"
+
+        if rsa_stats and os.path.exists(rsa_stats):
+            parsed = parse_stats_file(rsa_stats)
+            if parsed:
+                item["rsa_cpu_pct"] = parsed.get("cpu")
+                item["rsa_mem_gb"] = parsed.get("mem_gb")
+            else:
+                item["rsa_cpu_pct"] = None
+                item["rsa_mem_gb"] = None
+        else:
+            item["rsa_cpu_pct"] = None
+            item["rsa_mem_gb"] = None
+
+        # PQC
+        pqc_log = r.get("pqc_log")
+        pqc_stats = r.get("pqc_stats")
+        if pqc_log and os.path.exists(pqc_log):
+            with open(pqc_log, "r", encoding="utf-8") as f:
+                conteudo = f.read()
+            item["pqc_time_s"] = extrair_numero_tempo(conteudo)
+            item["pqc_status"] = extrair_status(conteudo, "pqc")
+        else:
+            item["pqc_time_s"] = None
+            item["pqc_status"] = "N/A"
+
+        if pqc_stats and os.path.exists(pqc_stats):
+            parsed = parse_stats_file(pqc_stats)
+            if parsed:
+                item["pqc_cpu_pct"] = parsed.get("cpu")
+                item["pqc_mem_gb"] = parsed.get("mem_gb")
+            else:
+                item["pqc_cpu_pct"] = None
+                item["pqc_mem_gb"] = None
+        else:
+            item["pqc_cpu_pct"] = None
+            item["pqc_mem_gb"] = None
+
+        dataset.append(item)
+
+    return dataset
+
+def estatisticas_coluna(valores):
+    v = [x for x in valores if x is not None]
+    if not v:
+        return {"count": 0, "mean": None, "stdev": None, "min": None, "max": None}
+    if len(v) == 1:
+        return {"count": 1, "mean": float(v[0]), "stdev": 0.0, "min": min(v), "max": max(v)}
+    return {"count": len(v), "mean": float(mean(v)), "stdev": float(stdev(v)), "min": min(v), "max": max(v)}
+
+def gerar_relatorio_agrupado(dataset):
+    rsa_times = [d["rsa_time_s"] for d in dataset]
+    pqc_times = [d["pqc_time_s"] for d in dataset]
+    rsa_cpu = [d["rsa_cpu_pct"] for d in dataset]
+    pqc_cpu = [d["pqc_cpu_pct"] for d in dataset]
+    rsa_mem = [d["rsa_mem_gb"] for d in dataset]
+    pqc_mem = [d["pqc_mem_gb"] for d in dataset]
+
+    resumo = {
+        "rsa_time": estatisticas_coluna(rsa_times),
+        "pqc_time": estatisticas_coluna(pqc_times),
+        "rsa_cpu": estatisticas_coluna(rsa_cpu),
+        "pqc_cpu": estatisticas_coluna(pqc_cpu),
+        "rsa_mem_gb": estatisticas_coluna(rsa_mem),
+        "pqc_mem_gb": estatisticas_coluna(pqc_mem),
+        "runs": len(dataset)
+    }
+    return resumo
+
+def salvar_resumo_json_csv(resumo, dataset):
+    out_json = os.path.join(PASTA_RELATORIOS, "resumo_aggregado.json")
+    with open(out_json, "w", encoding="utf-8") as f:
+        json.dump({"summary": resumo, "per_run": dataset}, f, indent=2, ensure_ascii=False)
+
+    csv_path = os.path.join(PASTA_RELATORIOS, "resumo_por_rodada.csv")
+    keys = ["run",
+            "rsa_time_s", "rsa_status", "rsa_cpu_pct", "rsa_mem_gb",
+            "pqc_time_s", "pqc_status", "pqc_cpu_pct", "pqc_mem_gb"]
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=keys)
+        writer.writeheader()
+        for row in dataset:
+            writer.writerow({k: row.get(k, "") for k in keys})
+    print(f"Resumo salvo: {out_json}")
+    print(f"CSV por rodada salvo: {csv_path}")
+
+# --- TABELA LIMPA (Apenas médias, sem desvio padrão) ---
+def imprimir_tabela_resumo(resumo):
+    tabela = [
+        ["Métrica", "RSA", "PQC", "Unidade"],
+        [
+            "CPU",
+            f"{resumo['rsa_cpu']['mean']:.2f}" if resumo['rsa_cpu']['mean'] is not None else "N/A",
+            f"{resumo['pqc_cpu']['mean']:.2f}" if resumo['pqc_cpu']['mean'] is not None else "N/A",
+            "%"
+        ],
+        [
+            "Memória",
+            f"{resumo['rsa_mem_gb']['mean']:.2f}" if resumo['rsa_mem_gb']['mean'] is not None else "N/A",
+            f"{resumo['pqc_mem_gb']['mean']:.2f}" if resumo['pqc_mem_gb']['mean'] is not None else "N/A",
+            "GB"
+        ],
+        [
+            "Tempo",
+            f"{resumo['rsa_time']['mean']:.2f}" if resumo['rsa_time']['mean'] is not None else "N/A",
+            f"{resumo['pqc_time']['mean']:.2f}" if resumo['pqc_time']['mean'] is not None else "N/A",
+            "s"
+        ]
+    ]
+    print("\nResumo agregado:")
+    print(tabulate(tabela, headers="firstrow", tablefmt="fancy_grid"))
+
+# --- FUNÇÃO DE GRÁFICO (Sem yerr e com cores corretas e margem) ---
+def gerar_graficos_esteticos(resumo, dataset, pasta_saida):
     """
-    Gera gráficos comparativos (CPU, Memória e Tempo) para RSA e PQC.
+    Gráfico estético usando médias.
+    Cores:
+      - Iguais: Azul (C0)
+      - Diferentes: Menor (Melhor) = Verde, Maior (Pior) = Vermelho
     """
-    # Filtra dados para o gráfico
-    nomes = [d["Ambiente"].upper() for d in dados]
-    cpu = [d["CPU (%)"] for d in dados]
-    tempo = [d["Tempo Total (s)"] for d in dados]
+    NUM_RUNS = resumo["runs"]
+    labels = ["RSA", "PQC"]
+
+    # Médias
+    cpu = [resumo["rsa_cpu"]["mean"] or 0, resumo["pqc_cpu"]["mean"] or 0]
+    memoria = [resumo["rsa_mem_gb"]["mean"] or 0, resumo["pqc_mem_gb"]["mean"] or 0]
+    tempo = [resumo["rsa_time"]["mean"] or 0, resumo["pqc_time"]["mean"] or 0]
     
-    # A memória precisa ser parseada novamente para valor numérico (removendo GB/MB)
-    memoria = []
-    for d in dados:
-        try:
-            # Pega o valor numérico da string convertida
-            valor = float(re.search(r"([\d\.]+)", d["Memória Usada"]).group(1))
-            memoria.append(valor)
-        except:
-            memoria.append(0)
+    # Cálculo dos valores máximos com margem
+    cpu_max_val = max(cpu)
+    mem_max_val = max(memoria)
+    tempo_max_val = max(tempo)
+    
+    # Margem segura (25%)
+    MARGEM = 1.25 
 
+    # Função interna para definir as cores
+    def definir_cores(v1, v2):
+        if abs(v1 - v2) < 0.01:
+            return ['C0', 'C0'] # Azul padrão
+        elif v1 < v2:
+            return ['tab:green', 'tab:red'] # Menor é melhor (Verde), Maior é pior (Vermelho)
+        else:
+            return ['tab:red', 'tab:green'] 
 
-    # Cria figura
     plt.figure(figsize=(10, 8))
-    
-    # Subgráfico 1 - CPU
+    plt.suptitle(f"Resultados Médios Após {NUM_RUNS} Rodadas de Teste", fontsize=16, fontweight="bold", y=0.98) 
+
+    # 1. CPU
     plt.subplot(3, 1, 1)
-    plt.bar(nomes, cpu, color=['darkred', 'darkgreen'])
-    plt.title("Uso de CPU (%) - Foco na Carga")
+    cores_cpu = definir_cores(cpu[0], cpu[1])
+    plt.bar(labels, cpu, color=cores_cpu)
+    plt.title("CPU (%)") 
     plt.ylabel("CPU (%)")
-    plt.ylim(min(cpu) * 0.9, max(cpu) * 1.1)
-    for i, v in enumerate(cpu):
-        plt.text(i, v + (max(cpu)*0.01), f"{v:.2f}%", ha='center')
-    plt.grid(True, linestyle="--", alpha=0.5)
-
-    # Subgráfico 2 - Memória
-    plt.subplot(3, 1, 2)
-    plt.bar(nomes, memoria, color="orange")
-    plt.title("Memória Usada (GB)")
-    plt.ylabel("Memória RAM (GB)")
-    for i, v in enumerate(memoria):
-        plt.text(i, v + (max(memoria)*0.01), f"{v:.2f}", ha='center')
-    plt.grid(True, linestyle="--", alpha=0.5)
-
-    # Subgráfico 3 - Tempo de Execução
-    plt.subplot(3, 1, 3)
-    plt.bar(nomes, tempo, color="green")
-    plt.title("Tempo Total de Execução (s)")
-    plt.ylabel("Tempo (s)")
-    for i, v in enumerate(tempo):
-        plt.text(i, v + 1, f"{v}s\n({dados[i]['Status Final']})", ha='center', fontsize=9)
-    plt.grid(True, linestyle="--", alpha=0.5)
+    plt.ylim(top=cpu_max_val * MARGEM) 
     
-    plt.tight_layout()
+    for i, v in enumerate(cpu):
+        plt.text(i, v, f"{v:.2f}", ha='center', va='bottom', fontsize=12, fontweight='bold')
+    plt.grid(axis='y', linestyle="--", alpha=0.5)
 
-    # Salva o gráfico consolidado
-    caminho_saida = os.path.join(pasta_saida, "grafico_desempenho.png")
+    # 2. Memória
+    plt.subplot(3, 1, 2)
+    cores_mem = definir_cores(memoria[0], memoria[1])
+    plt.bar(labels, memoria, color=cores_mem)
+    plt.title("Memória RAM Usada (GB)") 
+    plt.ylabel("GB") 
+    plt.ylim(top=mem_max_val * MARGEM)
+    
+    for i, v in enumerate(memoria):
+        plt.text(i, v, f"{v:.2f}", ha='center', va='bottom', fontsize=12, fontweight='bold')
+    plt.grid(axis='y', linestyle="--", alpha=0.5)
+
+    # 3. Tempo
+    plt.subplot(3, 1, 3)
+    cores_tempo = definir_cores(tempo[0], tempo[1])
+    plt.bar(labels, tempo, color=cores_tempo)
+    plt.title("Tempo total (s)") 
+    plt.ylabel("Segundos") 
+    plt.ylim(top=tempo_max_val * MARGEM)
+    
+    for i, v in enumerate(tempo):
+        plt.text(i, v, f"{v:.1f}s", ha='center', va='bottom', fontsize=12, fontweight='bold')
+    plt.grid(axis='y', linestyle="--", alpha=0.5)
+
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95]) 
+
+    caminho_saida = os.path.join(pasta_saida, "grafico_desempenho_estetico.png")
     plt.savefig(caminho_saida, dpi=200)
     plt.show()
     plt.close()
-    
     print(f"\nGráfico gerado com sucesso em:\n{caminho_saida}")
 
+# --- Main CLI ---
+def main():
+    parser = argparse.ArgumentParser(description="Analisa resultados de múltiplas rodadas RSA/PQC")
+    parser.add_argument("--aggregate", action="store_true", help="Agrupa e calcula médias das rodadas encontradas em relatorios/")
+    args = parser.parse_args()
 
-# --- Execução Final ---
+    if not os.path.exists(PASTA_RELATORIOS):
+        print(f"Pasta de relatórios não encontrada: {PASTA_RELATORIOS}")
+        return
+
+    if args.aggregate:
+        dataset = processar_todas_rodadas()
+        if not dataset:
+            print("Nenhum dado de rodadas coletado.")
+            return
+        resumo = gerar_relatorio_agrupado(dataset)
+        salvar_resumo_json_csv(resumo, dataset)
+        imprimir_tabela_resumo(resumo)
+        gerar_graficos_esteticos(resumo, dataset, PASTA_RELATORIOS)
+    else:
+        print("Sem argumentos. Use --aggregate para processar as rodadas.")
 
 if __name__ == "__main__":
-    if not os.path.exists(PASTA_RELATORIOS):
-        print(f"❌ Pasta de relatórios não encontrada em:\n{PASTA_RELATORIOS}")
-        exit()
-
-    relatorios_consolidados = gerar_relatorio_consolidado()
-    
-    if not relatorios_consolidados or len(relatorios_consolidados) < 2:
-        print("⚠️ ERRO: Não foi possível consolidar os dados para ambos os ambientes. Verifique se os 4 arquivos de log foram gerados com dados válidos.")
-        exit()
-
-    # --- 1. Geração da Tabela (tabulate) ---
-    
-    # Garante que as colunas apareçam na ordem correta:
-    ordem_colunas = ["Ambiente", "Status Final", "Tempo Total (s)", "CPU (%)", "Memória Usada", "Memória Limite", "NET I/O (Recebido)", "NET I/O (Enviado)"]
-    
-    # Preenche dados ausentes (para que todas as linhas tenham as mesmas chaves)
-    for dado in relatorios_consolidados:
-        for chave in ordem_colunas:
-            if chave not in dado:
-                dado[chave] = 'N/A' 
-                
-    tabela = tabulate(relatorios_consolidados, headers="keys", tablefmt="fancy_grid")
-
-    # Salva arquivo de saída
-    saida_tabela = os.path.join(PASTA_RELATORIOS, "resumo_consolidado_tcc.md")
-    with open(saida_tabela, "w", encoding="utf-8") as f:
-        f.write(tabela)
-
-    # --- 2. Geração dos Gráficos ---
-    gerar_graficos(relatorios_consolidados, PASTA_RELATORIOS)
-    
-    print(f"\n✅ Relatório consolidado (Tabela) gerado com sucesso em:\n{saida_tabela}")
-    print("\n--- Conteúdo do Relatório Consolidado ---")
-    print(tabela)
+    main()
