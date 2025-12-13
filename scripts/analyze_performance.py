@@ -234,7 +234,7 @@ def salvar_resumo_json_csv(resumo, dataset):
     print(f"Resumo salvo: {out_json}")
     print(f"CSV por rodada salvo: {csv_path}")
 
-# --- TABELA LIMPA (Apenas médias, sem desvio padrão) ---
+# TABELA
 def imprimir_tabela_resumo(resumo):
     tabela = [
         ["Métrica", "RSA", "PQC", "Unidade"],
@@ -260,7 +260,7 @@ def imprimir_tabela_resumo(resumo):
     print("\nResumo agregado:")
     print(tabulate(tabela, headers="firstrow", tablefmt="fancy_grid"))
 
-# --- FUNÇÃO DE GRÁFICO (Sem yerr e com cores corretas e margem) ---
+# FUNÇÃO DE GRÁFICO
 def gerar_graficos_esteticos(resumo, dataset, pasta_saida):
     """
     Gráfico estético usando médias.
