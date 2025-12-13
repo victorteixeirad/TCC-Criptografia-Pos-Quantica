@@ -13,6 +13,7 @@ Os resultados gerados são armazenados automaticamente na pasta relatórios, seg
 *OBS: Para executar ambos os scripts, certifique-se de que esteja na pasta "scritp" dentro do terminal.*
 
 *Para adicionar o nº de rodadas basta colocar após a digitação do script (conforme o exemplo abaixo)*
+
 ./run_simulation.sh 5 >>> *Neste exemplo o script fará 5 rodadas (cada rodada contendo 2 execução) no total 10.*
 
 *OBS* Quanto maior o for N, mais tempo levará para o script finalizar.
